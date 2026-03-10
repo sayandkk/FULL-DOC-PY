@@ -140,6 +140,181 @@ async def convert_pdf(file: UploadFile = File(...)):
 
 
 # ---------------------------------------------------------------------------
+# Word -> PDF conversion endpoint
+# ---------------------------------------------------------------------------
+import subprocess
+
+@app.post("/convert-word")
+async def convert_word(file: UploadFile = File(...)):
+    """
+    Accept a Word doc/docx file. Returns a PDF.
+    """
+    if not file.filename:
+        raise HTTPException(status_code=400, detail="No filename provided.")
+
+    original_name = Path(file.filename).stem
+    content_type = file.content_type or ""
+
+    if not (file.filename.lower().endswith((".doc", ".docx")) or "word" in content_type):
+        raise HTTPException(status_code=400, detail="Only Word files (.doc, .docx) are accepted.")
+
+    doc_bytes = await file.read()
+    if len(doc_bytes) == 0:
+        raise HTTPException(status_code=400, detail="Uploaded file is empty.")
+
+    tmp_dir = Path(tempfile.mkdtemp(prefix="doc_svc_"))
+    
+    # Needs to retain correct extension for LibreOffice
+    extension = Path(file.filename).suffix.lower()
+    doc_path = tmp_dir / f"{uuid.uuid4().hex}{extension}"
+    pdf_path = tmp_dir / f"{doc_path.stem}.pdf"
+
+    try:
+        doc_path.write_bytes(doc_bytes)
+        logger.info(
+            "Converting %s (%d bytes) → %s via libreoffice",
+            file.filename,
+            len(doc_bytes),
+            pdf_path.name,
+        )
+
+        # Build libreoffice command
+        # --env:UserInstallation is to prevent collisions if run concurrently
+        profile_dir = tmp_dir / "lo_profile"
+        cmd = [
+            "libreoffice",
+            f"-env:UserInstallation=file://{profile_dir}",
+            "--headless",
+            "--convert-to", "pdf",
+            "--outdir", str(tmp_dir),
+            str(doc_path)
+        ]
+        
+        proc = subprocess.run(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+        if proc.returncode != 0:
+            raise RuntimeError(f"LibreOffice returned {proc.returncode}. stderr={proc.stderr.decode('utf-8', errors='ignore')}")
+
+        if not pdf_path.exists() or pdf_path.stat().st_size == 0:
+            raise RuntimeError("Conversion produced empty or missing file.")
+
+        logger.info("Conversion successful → %d bytes", pdf_path.stat().st_size)
+
+        return FileResponse(
+            path=str(pdf_path),
+            media_type="application/pdf",
+            filename=f"{original_name}.pdf",
+            background=None,
+        )
+
+    except HTTPException:
+        raise
+    except Exception as exc:
+        logger.exception("Conversion failed for %s", file.filename)
+        raise HTTPException(status_code=500, detail=f"Conversion failed: {str(exc)}")
+    finally:
+        try:
+            doc_path.unlink(missing_ok=True)
+        except Exception:
+            pass
+
+
+# ---------------------------------------------------------------------------
+# Image -> PDF conversion endpoint
+# ---------------------------------------------------------------------------
+from PIL import Image
+import io
+
+@app.post("/convert-image-to-pdf")
+async def convert_image_to_pdf(file: UploadFile = File(...)):
+    """
+    Accept an Image file (jpg, png, etc). Returns a PDF.
+    """
+    if not file.filename:
+        raise HTTPException(status_code=400, detail="No filename provided.")
+
+    original_name = Path(file.filename).stem
+
+    try:
+        img_bytes = await file.read()
+        if len(img_bytes) == 0:
+            raise HTTPException(status_code=400, detail="Uploaded file is empty.")
+
+        logger.info("Converting Image %s (%d bytes) → PDF", file.filename, len(img_bytes))
+
+        # Open image using Pillow
+        image = Image.open(io.BytesIO(img_bytes))
+        
+        # Convert to RGB if it's RGBA or P (to avoid errors when saving as PDF)
+        if image.mode in ("RGBA", "P"):
+            image = image.convert("RGB")
+            
+        # Save directly to bytes buffer
+        pdf_bytes_io = io.BytesIO()
+        image.save(pdf_bytes_io, "PDF", resolution=100.0)
+        pdf_bytes_io.seek(0)
+        
+        pdf_bytes = pdf_bytes_io.read()
+        logger.info("Conversion successful → %d bytes", len(pdf_bytes))
+
+        # Return the bytes directly
+        return JSONResponse(
+            content=None, # Not used since we're returning raw bytes, but needed for proper syntax
+        )
+        
+    except Exception as exc:
+        logger.exception("Conversion failed for %s", file.filename)
+        raise HTTPException(status_code=500, detail=f"Conversion failed: {str(exc)}")
+        
+@app.post("/convert-image-to-pdf-file")
+async def convert_image_to_pdf_file(file: UploadFile = File(...)):
+    """
+    Accept an Image file (jpg, png, etc). Returns a PDF as file stream.
+    """
+    if not file.filename:
+        raise HTTPException(status_code=400, detail="No filename provided.")
+
+    original_name = Path(file.filename).stem
+
+    try:
+        img_bytes = await file.read()
+        if len(img_bytes) == 0:
+            raise HTTPException(status_code=400, detail="Uploaded file is empty.")
+
+        tmp_dir = Path(tempfile.mkdtemp(prefix="img_svc_"))
+        pdf_path = tmp_dir / f"{uuid.uuid4().hex}.pdf"
+
+        logger.info("Converting Image %s (%d bytes) → %s", file.filename, len(img_bytes), pdf_path.name)
+
+        # Open image using Pillow
+        image = Image.open(io.BytesIO(img_bytes))
+        
+        # Convert to RGB if it's RGBA or P (to avoid errors when saving as PDF)
+        if image.mode in ("RGBA", "P"):
+            image = image.convert("RGB")
+            
+        # Save to file
+        image.save(pdf_path, "PDF", resolution=100.0)
+        
+        if not pdf_path.exists() or pdf_path.stat().st_size == 0:
+            raise RuntimeError("Conversion produced empty or missing file.")
+
+        logger.info("Conversion successful → %d bytes", pdf_path.stat().st_size)
+
+        return FileResponse(
+            path=str(pdf_path),
+            media_type="application/pdf",
+            filename=f"{original_name}.pdf",
+            background=None,
+        )
+
+    except HTTPException:
+        raise
+    except Exception as exc:
+        logger.exception("Conversion failed for %s", file.filename)
+        raise HTTPException(status_code=500, detail=f"Conversion failed: {str(exc)}")
+
+
+# ---------------------------------------------------------------------------
 # Entry point (python main.py)
 # ---------------------------------------------------------------------------
 if __name__ == "__main__":

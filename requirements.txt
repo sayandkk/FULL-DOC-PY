@@ -12,3 +12,6 @@ python-multipart==0.0.9
 
 # Optional but useful for extra type hints in older Pythons
 typing-extensions>=4.0.0
+
+# Image to PDF
+Pillow>=10.0.0
