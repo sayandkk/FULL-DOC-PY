@@ -212,10 +212,91 @@ async def convert_image_to_pdf(background_tasks: BackgroundTasks, file: UploadFi
         )
     except Exception as exc:
         cleanup_temp_dir(tmp_dir)
-        logger.exception("Image conversion failed")
-        raise HTTPException(status_code=500, detail=f"Conversion failed: {str(exc)}")
+# ---------------------------------------------------------------------------
+# Text Extraction endpoints
+# ---------------------------------------------------------------------------
+import pytesseract
+
+@app.post("/extract-text-pdf")
+async def extract_text_pdf(background_tasks: BackgroundTasks, file: UploadFile = File(...)):
+    """
+    Accept a PDF file. Returns a TXT file with extracted text.
+    """
+    if not file.filename.lower().endswith(".pdf"):
+        raise HTTPException(status_code=400, detail="Only PDF files are supported.")
+
+    original_name = Path(file.filename).stem
+    content = await file.read()
+    if not content:
+        raise HTTPException(status_code=400, detail="Uploaded file is empty.")
+
+    tmp_dir = Path(tempfile.mkdtemp(prefix="txt_pdf_svc_"))
+    pdf_path = tmp_dir / f"{uuid.uuid4().hex}.pdf"
+    txt_path = tmp_dir / f"{original_name}.txt"
+
+    try:
+        pdf_path.write_bytes(content)
+        reader = PdfReader(str(pdf_path))
         
-# Redundant endpoint removed, using /convert-image-to-pdf
+        extracted_text = []
+        for page in reader.pages:
+            text = page.extract_text()
+            if text:
+                extracted_text.append(text)
+                
+        final_text = "\n\n".join(extracted_text)
+        
+        with open(txt_path, "w", encoding="utf-8") as f:
+            f.write(final_text)
+
+        background_tasks.add_task(cleanup_temp_dir, tmp_dir)
+
+        return FileResponse(
+            path=str(txt_path),
+            media_type="text/plain",
+            filename=f"{original_name}.txt"
+        )
+    except Exception as exc:
+        cleanup_temp_dir(tmp_dir)
+        logger.exception("PDF text extraction failed")
+        raise HTTPException(status_code=500, detail=f"Extraction failed: {str(exc)}")
+
+@app.post("/extract-text-image")
+async def extract_text_image(background_tasks: BackgroundTasks, file: UploadFile = File(...)):
+    """
+    Accept an Image file. Returns a TXT file with extracted text using OCR.
+    """
+    if not file.filename.lower().endswith((".png", ".jpg", ".jpeg")):
+        raise HTTPException(status_code=400, detail="Only images (PNG, JPG, JPEG) are supported.")
+
+    original_name = Path(file.filename).stem
+    content = await file.read()
+    if not content:
+        raise HTTPException(status_code=400, detail="Uploaded file is empty.")
+
+    tmp_dir = Path(tempfile.mkdtemp(prefix="txt_img_svc_"))
+    txt_path = tmp_dir / f"{original_name}.txt"
+
+    try:
+        image = Image.open(io.BytesIO(content))
+        
+        # Perform OCR
+        extracted_text = pytesseract.image_to_string(image)
+        
+        with open(txt_path, "w", encoding="utf-8") as f:
+            f.write(extracted_text)
+
+        background_tasks.add_task(cleanup_temp_dir, tmp_dir)
+
+        return FileResponse(
+            path=str(txt_path),
+            media_type="text/plain",
+            filename=f"{original_name}.txt"
+        )
+    except Exception as exc:
+        cleanup_temp_dir(tmp_dir)
+        logger.exception("Image text extraction failed")
+        raise HTTPException(status_code=500, detail=f"Extraction failed: {str(exc)}")
 
 
 # ---------------------------------------------------------------------------
