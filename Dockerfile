@@ -1,6 +1,6 @@
 FROM python:3.11-slim
 
-# Install LibreOffice for Word to PDF conversion
+# Install LibreOffice for Word to PDF conversion and Tesseract for OCR
 RUN apt-get update && apt-get install -y \
     libreoffice \
     libreoffice-writer \
@@ -9,6 +9,8 @@ RUN apt-get update && apt-get install -y \
     libreoffice-core \
     libreoffice-common \
     fonts-liberation \
+    tesseract-ocr \
+    tesseract-ocr-eng \
     --no-install-recommends \
     && rm -rf /var/lib/apt/lists/*
 

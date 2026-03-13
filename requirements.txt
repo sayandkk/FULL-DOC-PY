@@ -15,3 +15,9 @@ typing-extensions>=4.0.0
 
 # Image to PDF
 Pillow>=10.0.0
+
+# PDF Merge / Split
+pypdf>=4.0.0
+
+# OCR Tooling
+pytesseract>=0.3.13
